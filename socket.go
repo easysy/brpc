@@ -102,19 +102,19 @@ func (s *Socket) Broadcast(id, method string, payload any) (map[string]any, map[
 		return true
 	})
 
+	// Collect results
 	go func() {
-		wg.Wait()
-		close(res)
+		for r := range res {
+			if r.err != nil {
+				es[r.name] = r.err
+			} else {
+				rs[r.name] = r.response
+			}
+		}
 	}()
 
-	// Collect results
-	for r := range res {
-		if r.err != nil {
-			es[r.name] = r.err
-		} else {
-			rs[r.name] = r.response
-		}
-	}
+	wg.Wait()
+	close(res)
 
 	return rs, es
 }
