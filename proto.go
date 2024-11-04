@@ -18,7 +18,10 @@ const (
 	MethodShutdown = "Shutdown"
 )
 
-var ErrShutdown = errors.New("connection is shut down")
+var (
+	ErrShutdown       = errors.New("connection is shut down")
+	ErrMethodNotFound = errors.New("method not found")
+)
 
 // PluginInfo holds metadata about a plugin.
 type PluginInfo struct {

@@ -33,12 +33,22 @@ func suitableMethods(typ reflect.Type) map[string]*methodType {
 		}
 
 		// Ensure the second input parameter is of type context.Context
-		if errType := mType.In(1); errType != reflect.TypeFor[context.Context]() {
+		if cType := mType.In(1); cType != reflect.TypeFor[context.Context]() {
+			continue
+		}
+
+		// Ensure the second input parameter is not an invalid type, chan, func or interface
+		if aType := mType.In(2).Kind(); aType == reflect.Invalid || aType == reflect.Chan || aType == reflect.Func || aType == reflect.Interface {
+			continue
+		}
+
+		// Ensure the first output parameter is not an invalid type, chan or func
+		if aType := mType.Out(0).Kind(); aType == reflect.Invalid || aType == reflect.Chan || aType == reflect.Func {
 			continue
 		}
 
 		// Ensure the second output parameter is of type error
-		if errType := mType.Out(1); errType != reflect.TypeFor[error]() {
+		if eType := mType.Out(1); eType != reflect.TypeFor[error]() {
 			continue
 		}
 
