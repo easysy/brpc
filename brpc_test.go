@@ -115,6 +115,15 @@ func (s *TestType) Map(_ context.Context, in map[string]string) (map[string]stri
 	return in, nil
 }
 
+func (s *TestType) Interface(_ context.Context, in any) (any, error) {
+	i, ok := in.(map[string]any)
+	if !ok {
+		return nil, errors.New("not a map[string]any")
+	}
+	i["C"] = "test"
+	return i, nil
+}
+
 func (s *TestType) UnsuitableMethodInvalidInputTypeChan(_ context.Context, in chan string) (string, error) {
 	return <-in, nil
 }
@@ -145,13 +154,15 @@ func (s *TestType) privateMethod(context.Context, struct{}) (string, error) {
 	return "", nil
 }
 
-func TestPlugin_Start(t *testing.T) {
+const pn = "TestPlugin"
+
+func TestBRPC(t *testing.T) {
 	lis := NewMockListener()
 	sock := new(brpc.Socket)
 	sock.Serve(lis)
 
 	pi := brpc.PluginInfo{
-		Name:    "TestPlugin",
+		Name:    pn,
 		Version: "v0.0.0",
 	}
 
@@ -181,78 +192,85 @@ func TestPlugin_Start(t *testing.T) {
 	}{
 		{
 			name: "Builtin type",
-			pl:   "TestPlugin",
+			pl:   pn,
 			fn:   "Builtin",
 			in:   123,
 			out:  "123",
 		},
 		{
 			name: "Array",
-			pl:   "TestPlugin",
+			pl:   pn,
 			fn:   "Array",
 			in:   []string{"word a", "word b", "word c", "word d", "word e"},
 			out:  []any{"word a", "word b", "word c"},
 		},
 		{
 			name: "Slice",
-			pl:   "TestPlugin",
+			pl:   pn,
 			fn:   "Slice",
 			in:   []string{"word a", "word b"},
 			out:  []any{"word a", "word b"},
 		},
 		{
 			name: "Struct",
-			pl:   "TestPlugin",
+			pl:   pn,
 			fn:   "Struct",
 			in:   &StringParams{A: "word a", B: "word b"},
 			out:  map[string]any{"A": "WORD A", "B": "WORD B"},
 		},
 		{
 			name: "Map",
-			pl:   "TestPlugin",
+			pl:   pn,
 			fn:   "Map",
 			in:   &StringParams{A: "12.5", B: "1.25"},
 			out:  map[string]any{"A": "12.5", "B": "1.25", "C": "test"},
 		},
 		{
+			name: "Interface",
+			pl:   pn,
+			fn:   "Interface",
+			in:   &StringParams{A: "12.5", B: "1.25"},
+			out:  map[string]any{"A": "12.5", "B": "1.25", "C": "test"},
+		},
+		{
+			name: "Unsuitable method invalid input interface type",
+			pl:   pn,
+			fn:   "UnsuitableMethodInvalidInputTypeInterface",
+			err:  brpc.ErrMethodNotFound,
+		},
+		{
 			name: "Unsuitable method invalid input type chan",
-			pl:   "TestPlugin",
+			pl:   pn,
 			fn:   "UnsuitableMethodInvalidInputTypeChan",
 			err:  brpc.ErrMethodNotFound,
 		},
 		{
 			name: "Unsuitable method invalid input type func",
-			pl:   "TestPlugin",
+			pl:   pn,
 			fn:   "UnsuitableMethodInvalidInputTypeFunc",
 			err:  brpc.ErrMethodNotFound,
 		},
 		{
-			name: "Unsuitable method invalid input type interface",
-			pl:   "TestPlugin",
-			fn:   "UnsuitableMethodInvalidInputTypeInterface",
-			err:  brpc.ErrMethodNotFound,
-		},
-		{
 			name: "Unsuitable method invalid output type chan",
-			pl:   "TestPlugin",
+			pl:   pn,
 			fn:   "UnsuitableMethodInvalidOutputTypeChan",
 			err:  brpc.ErrMethodNotFound,
 		},
 		{
 			name: "Unsuitable method invalid output type func",
-			pl:   "TestPlugin",
+			pl:   pn,
 			fn:   "UnsuitableMethodInvalidOutputTypeFunc",
 			err:  brpc.ErrMethodNotFound,
 		},
 		{
 			name: "Unsuitable method invalid signature",
-			pl:   "TestPlugin",
+			pl:   pn,
 			fn:   "UnsuitableMethodInvalidSignature",
 			err:  brpc.ErrMethodNotFound,
 		},
 		{
 			name: "private method",
-			pl:   "TestPlugin",
+			pl:   pn,
 			fn:   "privateMethod",
 			err:  brpc.ErrMethodNotFound,
 		},
@@ -271,4 +289,7 @@ func TestPlugin_Start(t *testing.T) {
 			equal(t, res, tt.out)
 		})
 	}
+
+	sock.Unplug("", pn)
+	equal(t, 0, len(sock.Connected()))
 }
