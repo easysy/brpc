@@ -33,7 +33,7 @@ type Plugin struct {
 //	func (t *T) UseAsyncHook(hook chan any)
 //
 // where T1 and T2 are valid exported (or builtin) types. T1 must not be a channel, function
-// or interface type. Similarly, T2 must not be a channel or function type.
+// or non-empty interface type. Similarly, T2 must not be a channel or function type.
 //
 // Methods that do not match the required signatures are ignored.
 //

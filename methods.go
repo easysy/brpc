@@ -38,12 +38,12 @@ func suitableMethods(typ reflect.Type) map[string]*methodType {
 		}
 
 		// Ensure the second input parameter is not an invalid type, chan, func or interface
-		if aType := mType.In(2).Kind(); aType == reflect.Invalid || aType == reflect.Chan || aType == reflect.Func || aType == reflect.Interface {
+		if unsuitableType(mType.In(2), true) {
 			continue
 		}
 
 		// Ensure the first output parameter is not an invalid type, chan or func
-		if aType := mType.Out(0).Kind(); aType == reflect.Invalid || aType == reflect.Chan || aType == reflect.Func {
+		if unsuitableType(mType.Out(0), false) {
 			continue
 		}
 
@@ -72,4 +72,14 @@ func isUseAsyncHook(mName string, mType reflect.Type) bool {
 
 	// Ensure the second input parameter is a channel of any type
 	return mType.In(1) == reflect.TypeFor[chan any]()
+}
+
+// unsuitableType checks if type `t` is unsuitable (invalid type, chan or func)
+// if `i` is true, additionally checks for a non-empty interface.
+func unsuitableType(t reflect.Type, i bool) bool {
+	k := t.Kind()
+	if i && k == reflect.Interface {
+		return t != reflect.TypeFor[any]()
+	}
+	return k == reflect.Invalid || k == reflect.Chan || k == reflect.Func
 }
