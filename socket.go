@@ -4,8 +4,12 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"os"
+	"os/signal"
 	"sync"
 	"sync/atomic"
+	"syscall"
+	"time"
 
 	"github.com/easysy/brpc/collector"
 )
@@ -23,29 +27,45 @@ type Socket struct {
 func (s *Socket) Serve(listener net.Listener) {
 	s.listener = listener
 	s.plugins = collector.New[string, *processor]()
-	s.async = make(chan *AsyncData, 10)
+	s.async = make(chan *AsyncData)
 
 	go s.serve()
 }
 
 // serve listens for incoming connections and handles them in separate goroutines.
 func (s *Socket) serve() {
+	conn := make(chan net.Conn)
+
+	sigint := make(chan os.Signal, 1)
+	signal.Notify(sigint, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		for {
+			c, err := s.listener.Accept()
+			if err != nil {
+				slog.Error("accept connection", "error", err)
+				sigint <- syscall.SIGTERM
+				return
+			}
+			conn <- c
+		}
+	}()
+
+LOOP:
 	for {
-		conn, err := s.listener.Accept()
-		if errors.Is(err, net.ErrClosed) {
-			continue
-		} else if err != nil {
-			slog.Error("accept connection", "error", err)
-			return
+		select {
+		case <-sigint:
+			if err := s.Shutdown(""); err != nil {
+				slog.Error("shutdown socket", "error", err)
+			}
+			break LOOP
+		case c := <-conn:
+			s.waiter.Add(1)
+			go s.handleConnection(newCodec(c))
 		}
-
-		if s.shutdown.Load() {
-			return
-		}
-
-		s.waiter.Add(1)
-		go s.handleConnection(newCodec(conn))
 	}
+
+	s.waiter.Wait()
 }
 
 // handleConnection manages the connection lifecycle for a plugin.
@@ -239,7 +259,11 @@ func (p *processor) post(async chan *AsyncData, e *Envelope) {
 		}
 
 		if !p.shutdown.Load() {
-			async <- a
+			timer := time.NewTimer(time.Second)
+			select {
+			case async <- a:
+			case <-timer.C: // Skip sending to async channel if there are no readers for a second, to avoid hanging goroutines
+			}
 		}
 		return
 	}

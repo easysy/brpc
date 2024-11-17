@@ -177,7 +177,7 @@ func TestBRPC(t *testing.T) {
 
 	for {
 		if infos := sock.Connected(); len(infos) != 0 {
-			equal(t, infos[0], pi)
+			equal(t, pi, infos[0])
 			break
 		}
 	}
@@ -285,8 +285,8 @@ func TestBRPC(t *testing.T) {
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			res, err := sock.Call(strconv.Itoa(i), tt.pl, tt.fn, tt.in)
-			equal(t, err, tt.err)
-			equal(t, res, tt.out)
+			equal(t, tt.err, err)
+			equal(t, tt.out, res)
 		})
 	}
 
