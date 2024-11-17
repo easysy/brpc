@@ -5,8 +5,11 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"os/signal"
 	"reflect"
 	"sync"
+	"syscall"
 )
 
 // Plugin represents a plugin instance that handles communication via a connection.
@@ -102,14 +105,35 @@ func (p *Plugin) Start(v any, info *PluginInfo, conn io.ReadWriteCloser, ctxKey 
 
 // listen waits for incoming envelopes (requests) and processes them in separate goroutines.
 func (p *Plugin) listen() (err error) {
+	envelope := make(chan *Envelope)
+
+	sigint := make(chan os.Signal, 1)
+	signal.Notify(sigint, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		for {
+			e := new(Envelope)
+			if err = p.codec.read(e); err != nil {
+				sigint <- syscall.SIGTERM
+				return
+			}
+			envelope <- e
+		}
+	}()
+
 	for {
-		e := new(Envelope)
-		if err = p.codec.read(e); err != nil {
-			return
+		var e *Envelope
+		var shutdown bool
+
+		select {
+		case <-sigint:
+			shutdown = true
+		case e = <-envelope:
+			shutdown = e.Method == MethodShutdown
 		}
 
 		// If it's a shutdown request, stop the plugin after processing pending requests
-		if e.Method == MethodShutdown {
+		if shutdown {
 			slog.Info("received shutdown request")
 			p.wg.Wait() // Wait for all pending requests to complete
 			return
