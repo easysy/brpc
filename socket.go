@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/easysy/brpc/collector"
 )
@@ -26,7 +27,7 @@ type Socket struct {
 func (s *Socket) Serve(listener net.Listener) {
 	s.listener = listener
 	s.plugins = collector.New[string, *processor]()
-	s.async = make(chan *AsyncData, 10)
+	s.async = make(chan *AsyncData)
 
 	go s.serve()
 }
@@ -258,7 +259,11 @@ func (p *processor) post(async chan *AsyncData, e *Envelope) {
 		}
 
 		if !p.shutdown.Load() {
-			async <- a
+			timer := time.NewTimer(time.Second)
+			select {
+			case async <- a:
+			case <-timer.C: // Skip sending to async channel if there are no readers for a second, to avoid hanging goroutines
+			}
 		}
 		return
 	}
