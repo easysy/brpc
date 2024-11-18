@@ -17,6 +17,7 @@ import (
 type Plugin struct {
 	codec *codec
 	wg    sync.WaitGroup
+	awg   sync.WaitGroup
 
 	name    string                 // name of plugin
 	rec     reflect.Value          // receiver of methods for the plugin
@@ -81,7 +82,10 @@ func (p *Plugin) Start(v any, info *PluginInfo, conn io.ReadWriteCloser, ctxKey 
 	}
 
 	p.codec = newCodec(conn)
-	defer p.codec.close()
+	defer func() {
+		p.awg.Wait() // Wait for async writer to complete
+		p.codec.close()
+	}()
 
 	// Send handshake containing plugin information to the socket
 	if err := p.codec.write(info); err != nil {
@@ -93,6 +97,7 @@ func (p *Plugin) Start(v any, info *PluginInfo, conn io.ReadWriteCloser, ctxKey 
 		end := make(chan struct{})
 		defer close(end)
 
+		p.awg.Add(1)
 		go p.asyncWriter(end)
 	}
 
@@ -114,7 +119,7 @@ func (p *Plugin) listen() (err error) {
 		for {
 			e := new(Envelope)
 			if err = p.codec.read(e); err != nil {
-				sigint <- syscall.SIGTERM
+				close(sigint)
 				return
 			}
 			envelope <- e
@@ -132,9 +137,10 @@ func (p *Plugin) listen() (err error) {
 			shutdown = e.Method == MethodShutdown
 		}
 
-		// If it's a shutdown request, stop the plugin after processing pending requests
+		// If it's a shutdown request or interrupt/termination syscall is received,
+		// stop the plugin after processing pending requests
 		if shutdown {
-			slog.Info("received shutdown request")
+			slog.Info("stop the plugin")
 			p.wg.Wait() // Wait for all pending requests to complete
 			return
 		}
@@ -199,7 +205,10 @@ func (p *Plugin) processor(ctx context.Context, e *Envelope) error {
 // It runs as a separate goroutine to handle values independently of the main listen loop.
 func (p *Plugin) asyncWriter(end chan struct{}) {
 	slog.Info("async writer started")
-	defer slog.Info("async writer stopped")
+	defer func() {
+		slog.Info("async writer stopped")
+		p.awg.Done()
+	}()
 
 	e := &Envelope{Method: MethodAsync}
 
