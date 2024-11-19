@@ -251,6 +251,13 @@ func (p *processor) receive(wg *sync.WaitGroup, async chan *AsyncData) {
 	for {
 		e := new(Envelope)
 		if err := p.codec.read(e); err != nil {
+			p.mu.Lock()
+			for seq, c := range p.pending {
+				delete(p.pending, seq)
+				c.error = err
+				close(c.response)
+			}
+			p.mu.Unlock()
 			return
 		}
 		wg.Add(1)
@@ -284,6 +291,7 @@ func (p *processor) post(wg *sync.WaitGroup, async chan *AsyncData, e *Envelope)
 	p.mu.Unlock()
 
 	if !ok {
+		slog.Error("no pending call for", "envelop", e)
 		return
 	}
 
