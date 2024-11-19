@@ -34,6 +34,9 @@ func (s *Socket) Serve(listener net.Listener) {
 
 // serve listens for incoming connections and handles them in separate goroutines.
 func (s *Socket) serve() {
+	slog.Info("socket started")
+	defer slog.Info("socket stopped")
+
 	conn := make(chan net.Conn)
 
 	sigint := make(chan os.Signal, 1)
@@ -43,8 +46,10 @@ func (s *Socket) serve() {
 		for {
 			c, err := s.listener.Accept()
 			if err != nil {
-				slog.Error("accept connection", "error", err)
-				sigint <- syscall.SIGTERM
+				if errors.Is(err, net.ErrClosed) {
+					err = nil
+				}
+				close(sigint)
 				return
 			}
 			conn <- c
@@ -65,13 +70,15 @@ LOOP:
 		}
 	}
 
-	s.waiter.Wait()
+	s.waiter.Wait() // Wait until all plugins are stopped
 }
 
 // handleConnection manages the connection lifecycle for a plugin.
 func (s *Socket) handleConnection(c *codec) {
-	defer c.close()
-	defer s.waiter.Done()
+	defer func() {
+		s.waiter.Done()
+		c.close()
+	}()
 
 	// Handle handshake to read plugin information
 	var info PluginInfo
@@ -86,7 +93,7 @@ func (s *Socket) handleConnection(c *codec) {
 	defer s.plugins.Delete(info.Name)
 
 	if !s.shutdown.Load() {
-		plug.receive(s.async) // Start receiving messages for this plugin
+		plug.receive(&s.waiter, s.async) // Start receiving messages for this plugin
 	}
 }
 
@@ -175,7 +182,7 @@ func (s *Socket) Shutdown(id string) error {
 		return nil
 	}
 
-	close(s.async)
+	defer close(s.async)
 
 	s.plugins.Range(func(_ string, p *processor) bool {
 		if !p.shutdown.Load() {
@@ -238,19 +245,29 @@ func (p *processor) call(trace, method string, payload any) (any, error) {
 	return <-c.response, c.error
 }
 
-func (p *processor) receive(async chan *AsyncData) {
+func (p *processor) receive(wg *sync.WaitGroup, async chan *AsyncData) {
 	defer close(p.end)
 
 	for {
 		e := new(Envelope)
 		if err := p.codec.read(e); err != nil {
+			p.mu.Lock()
+			for seq, c := range p.pending {
+				delete(p.pending, seq)
+				c.error = err
+				close(c.response)
+			}
+			p.mu.Unlock()
 			return
 		}
-		go p.post(async, e)
+		wg.Add(1)
+		go p.post(wg, async, e)
 	}
 }
 
-func (p *processor) post(async chan *AsyncData, e *Envelope) {
+func (p *processor) post(wg *sync.WaitGroup, async chan *AsyncData, e *Envelope) {
+	defer wg.Done()
+
 	if e.Method == MethodAsync {
 		a := &AsyncData{Name: p.Name}
 		if err := e.decode(&a.Payload); err != nil {
@@ -258,13 +275,11 @@ func (p *processor) post(async chan *AsyncData, e *Envelope) {
 			return
 		}
 
-		if !p.shutdown.Load() {
-			timer := time.NewTimer(time.Second)
-			select {
-			case async <- a:
-			case <-timer.C: // Skip sending to async channel if there are no readers for a second, to avoid hanging goroutines
-			}
+		select {
+		case async <- a:
+		case <-time.NewTimer(time.Second).C: // Skip sending to async channel if there are no readers for a second, to avoid hanging goroutines
 		}
+
 		return
 	}
 
@@ -276,6 +291,7 @@ func (p *processor) post(async chan *AsyncData, e *Envelope) {
 	p.mu.Unlock()
 
 	if !ok {
+		slog.Error("no pending call for", "envelop", e)
 		return
 	}
 
