@@ -110,15 +110,15 @@ func (p *Plugin) Start(v any, info *PluginInfo, conn io.ReadWriteCloser, ctxKey 
 
 // listen waits for incoming envelopes (requests) and processes them in separate goroutines.
 func (p *Plugin) listen() (err error) {
-	envelope := make(chan *Envelope)
-
 	sigint := make(chan os.Signal, 1)
 	signal.Notify(sigint, syscall.SIGINT, syscall.SIGTERM)
+	envelope := make(chan *Envelope)
 
 	go func() {
 		for {
 			e := new(Envelope)
 			if err = p.codec.read(e); err != nil {
+				signal.Stop(sigint)
 				close(sigint)
 				return
 			}

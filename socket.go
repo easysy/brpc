@@ -25,8 +25,12 @@ type Socket struct {
 
 // Serve initializes the Socket and starts listen for incoming connections.
 func (s *Socket) Serve(listener net.Listener) {
+	s.shutdown.Store(false)
+
 	s.listener = listener
-	s.plugins = collector.New[string, *processor]()
+	if s.plugins == nil {
+		s.plugins = collector.New[string, *processor]()
+	}
 	s.async = make(chan *AsyncData)
 
 	go s.serve()
@@ -37,18 +41,15 @@ func (s *Socket) serve() {
 	slog.Info("socket started")
 	defer slog.Info("socket stopped")
 
-	conn := make(chan net.Conn)
-
 	sigint := make(chan os.Signal, 1)
 	signal.Notify(sigint, syscall.SIGINT, syscall.SIGTERM)
+	conn := make(chan net.Conn)
 
 	go func() {
 		for {
 			c, err := s.listener.Accept()
 			if err != nil {
-				if errors.Is(err, net.ErrClosed) {
-					err = nil
-				}
+				signal.Stop(sigint)
 				close(sigint)
 				return
 			}
@@ -60,14 +61,15 @@ LOOP:
 	for {
 		select {
 		case <-sigint:
-			if err := s.Shutdown(""); err != nil {
-				slog.Error("shutdown socket", "error", err)
-			}
 			break LOOP
 		case c := <-conn:
 			s.waiter.Add(1)
 			go s.handleConnection(newCodec(c))
 		}
+	}
+
+	if err := s.Shutdown(""); err != nil {
+		slog.Error("shutdown socket", "error", err)
 	}
 
 	s.waiter.Wait() // Wait until all plugins are stopped
@@ -76,8 +78,8 @@ LOOP:
 // handleConnection manages the connection lifecycle for a plugin.
 func (s *Socket) handleConnection(c *codec) {
 	defer func() {
-		s.waiter.Done()
 		c.close()
+		s.waiter.Done()
 	}()
 
 	// Handle handshake to read plugin information
