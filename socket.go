@@ -37,7 +37,7 @@ func (s *Socket) Serve(listener net.Listener) {
 	if s.waiters == nil {
 		s.waiters = make(map[string]chan struct{})
 	}
-	s.async = make(chan *AsyncData, 1)
+	s.async = make(chan *AsyncData)
 
 	go s.serve()
 }
@@ -97,7 +97,7 @@ func (s *Socket) handleConnection(c *codec) {
 
 	plug := &processor{PluginInfo: info, codec: c, pending: make(map[uint64]*call), end: make(chan struct{})}
 
-	s.sendAsync(&AsyncData{Name: info.Name, Payload: "connected"})
+	go s.sendAsync(&AsyncData{Name: info.Name, Payload: info.Version + " connected"})
 	s.plugins.Store(info.Name, plug)
 
 	s.mu.Lock()
@@ -109,7 +109,7 @@ func (s *Socket) handleConnection(c *codec) {
 
 	defer func() {
 		s.plugins.Delete(info.Name)
-		s.sendAsync(&AsyncData{Name: info.Name, Payload: "disconnected"})
+		go s.sendAsync(&AsyncData{Name: info.Name, Payload: info.Version + " disconnected"})
 	}()
 
 	if !s.shutdown.Load() {
@@ -327,7 +327,7 @@ func (p *processor) post(wg *sync.WaitGroup, async func(a *AsyncData), e *Envelo
 			slog.Error("async payload decode", "error", err)
 			return
 		}
-		async(a)
+		go async(a)
 		return
 	}
 
