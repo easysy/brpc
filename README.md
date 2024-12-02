@@ -63,20 +63,32 @@ func main() {
 		}
 	}()
 
+	pn := "your_plugin_name"
+
 	// Wait for your plugin to be connected
-	for {
-		if infos := s.Connected(); len(infos) != 0 {
-			break
-		}
-		time.Sleep(time.Second)
+	if !s.WaitFor(pn, time.Second*30) {
+		panic(pn + "not connected before timeout")
 	}
 
 	var resp any
-	if resp, err = s.Call("", "your_plugin_name", "ExampleMethod", nil); err != nil {
+	if resp, err = s.Call("", pn, "ExampleMethod", nil); err != nil {
 		panic(err)
 	}
 
 	fmt.Println(resp)
+
+	// Get a list of connected plugins
+	fmt.Println("list:", s.Connected())
+
+	// If you need, you can stop any plugin
+	s.Unplug("1", pn)
+
+	fmt.Println("list:", s.Connected())
+
+	// Shutdown the socket
+	if err = s.Shutdown("2"); err != nil {
+		panic(err)
+	}
 }
 
 ```

@@ -150,7 +150,7 @@ func (s *TestType) UnsuitableMethodInvalidSignature(in *FloatParams) (float64, e
 	return in.A + in.B, nil
 }
 
-func (s *TestType) privateMethod(context.Context, struct{}) (string, error) {
+func (s *TestType) privateMethod(_ context.Context, _ struct{}) (string, error) {
 	return "", nil
 }
 
@@ -175,12 +175,12 @@ func TestBRPC(t *testing.T) {
 		equal(t, nil, err)
 	}()
 
-	for {
-		if infos := sock.Connected(); len(infos) != 0 {
-			equal(t, pi, infos[0])
-			break
-		}
+	if !sock.WaitFor(pi.Name, time.Second*30) {
+		t.Fatalf("%s not connected before timeout", pi.Name)
 	}
+
+	infos := sock.Connected()
+	equal(t, pi, infos[0])
 
 	tests := []struct {
 		name string
