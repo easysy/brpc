@@ -20,7 +20,10 @@ type Socket struct {
 	plugins  collector.Collector[string, *processor] // collection of registered plugins
 	async    chan *AsyncData                         // channel for async received values
 	shutdown atomic.Bool                             // true when Socket is in shutdown
-	waiter   sync.WaitGroup                          // waiter is required to gracefully stop all plugins
+	wg       sync.WaitGroup                          // wg is required to gracefully stop all plugins
+
+	mu      sync.Mutex
+	waiters map[string]chan struct{}
 }
 
 // Serve initializes the Socket and starts listen for incoming connections.
@@ -31,7 +34,10 @@ func (s *Socket) Serve(listener net.Listener) {
 	if s.plugins == nil {
 		s.plugins = collector.New[string, *processor]()
 	}
-	s.async = make(chan *AsyncData)
+	if s.waiters == nil {
+		s.waiters = make(map[string]chan struct{})
+	}
+	s.async = make(chan *AsyncData, 1)
 
 	go s.serve()
 }
@@ -63,7 +69,7 @@ LOOP:
 		case <-sigint:
 			break LOOP
 		case c := <-conn:
-			s.waiter.Add(1)
+			s.wg.Add(1)
 			go s.handleConnection(newCodec(c))
 		}
 	}
@@ -72,14 +78,14 @@ LOOP:
 		slog.Error("shutdown socket", "error", err)
 	}
 
-	s.waiter.Wait() // Wait until all plugins are stopped
+	s.wg.Wait() // Wait until all plugins are stopped
 }
 
 // handleConnection manages the connection lifecycle for a plugin.
 func (s *Socket) handleConnection(c *codec) {
 	defer func() {
 		c.close()
-		s.waiter.Done()
+		s.wg.Done()
 	}()
 
 	// Handle handshake to read plugin information
@@ -91,11 +97,32 @@ func (s *Socket) handleConnection(c *codec) {
 
 	plug := &processor{PluginInfo: info, codec: c, pending: make(map[uint64]*call), end: make(chan struct{})}
 
+	s.sendAsync(&AsyncData{Name: info.Name, Payload: "connected"})
 	s.plugins.Store(info.Name, plug)
-	defer s.plugins.Delete(info.Name)
+
+	s.mu.Lock()
+	// If the plugin has a waiter, let it know that the plugin is connected
+	if w, ok := s.waiters[info.Name]; ok {
+		w <- struct{}{}
+	}
+	s.mu.Unlock()
+
+	defer func() {
+		s.plugins.Delete(info.Name)
+		s.sendAsync(&AsyncData{Name: info.Name, Payload: "disconnected"})
+	}()
 
 	if !s.shutdown.Load() {
-		plug.receive(&s.waiter, s.async) // Start receiving messages for this plugin
+		plug.receive(&s.wg, s.sendAsync) // Start receiving messages for this plugin
+	}
+}
+
+// sendAsync sends async data to async channel.
+// It skips sending to async channel if there are no readers for a second, to avoid hanging goroutines.
+func (s *Socket) sendAsync(a *AsyncData) {
+	select {
+	case s.async <- a:
+	case <-time.NewTimer(time.Second).C:
 	}
 }
 
@@ -157,6 +184,30 @@ func (s *Socket) Async() (*AsyncData, error) {
 	return nil, ErrShutdown
 }
 
+// WaitFor waits for a specified plugin to connect within a given timeout duration.
+// If the plugin connects within the timeout, it returns 'true'.
+// If the timeout expires before the plugin connects, it returns 'false'.
+func (s *Socket) WaitFor(name string, timeout time.Duration) bool {
+	s.mu.Lock()
+	c := make(chan struct{}, 1)
+	s.waiters[name] = c
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		close(c)
+		delete(s.waiters, name)
+		s.mu.Unlock()
+	}()
+
+	select {
+	case <-c:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
 // Connected returns a list of connected plugins.
 func (s *Socket) Connected() []PluginInfo {
 	connected := make([]PluginInfo, 0)
@@ -193,7 +244,7 @@ func (s *Socket) Shutdown(id string) error {
 		return true
 	})
 
-	s.waiter.Wait() // Wait until all plugins are stopped
+	s.wg.Wait() // Wait until all plugins are stopped
 
 	return s.listener.Close()
 }
@@ -247,7 +298,7 @@ func (p *processor) call(trace, method string, payload any) (any, error) {
 	return <-c.response, c.error
 }
 
-func (p *processor) receive(wg *sync.WaitGroup, async chan *AsyncData) {
+func (p *processor) receive(wg *sync.WaitGroup, async func(a *AsyncData)) {
 	defer close(p.end)
 
 	for {
@@ -267,7 +318,7 @@ func (p *processor) receive(wg *sync.WaitGroup, async chan *AsyncData) {
 	}
 }
 
-func (p *processor) post(wg *sync.WaitGroup, async chan *AsyncData, e *Envelope) {
+func (p *processor) post(wg *sync.WaitGroup, async func(a *AsyncData), e *Envelope) {
 	defer wg.Done()
 
 	if e.Method == MethodAsync {
@@ -276,12 +327,7 @@ func (p *processor) post(wg *sync.WaitGroup, async chan *AsyncData, e *Envelope)
 			slog.Error("async payload decode", "error", err)
 			return
 		}
-
-		select {
-		case async <- a:
-		case <-time.NewTimer(time.Second).C: // Skip sending to async channel if there are no readers for a second, to avoid hanging goroutines
-		}
-
+		async(a)
 		return
 	}
 
