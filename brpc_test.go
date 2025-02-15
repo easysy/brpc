@@ -14,7 +14,7 @@ import (
 	"github.com/easysy/brpc"
 )
 
-func equal(t *testing.T, exp, got interface{}) {
+func equal(t *testing.T, exp, got any) {
 	t.Helper()
 	if !reflect.DeepEqual(exp, got) {
 		t.Fatalf("Not equal:\nexp: %v\ngot: %v", exp, got)

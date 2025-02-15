@@ -19,12 +19,12 @@ type Plugin struct {
 	wg    sync.WaitGroup
 	awg   sync.WaitGroup
 
-	name    string                 // name of plugin
-	rec     reflect.Value          // receiver of methods for the plugin
-	typ     reflect.Type           // type of the receiver
-	methods map[string]*methodType // registered methods
-	async   chan any               // optional hook for async processing
-	ctxKey  any                    // optional key is used to add a trace ID to the context
+	name    string        // name of plugin
+	rec     reflect.Value // receiver of methods for the plugin
+	typ     reflect.Type  // type of the receiver
+	methods methods       // registered methods
+	async   chan any      // optional hook for async processing
+	ctxKey  any           // optional key is used to add a trace ID to the context
 }
 
 // Start registers the provided plugin receiver uses reflection to inspect the receiver's methods
@@ -52,14 +52,14 @@ func (p *Plugin) Start(v any, info *PluginInfo, conn io.ReadWriteCloser, ctxKey 
 	typ := reflect.TypeOf(v)
 
 	name := reflect.Indirect(rec).Type().Name()
-	methods := suitableMethods(typ)
+	ms := suitableMethods(typ)
 
 	// If no valid methods are found, return an error
-	if len(methods) == 0 {
+	if len(ms) == 0 {
 		str := "plugin.Register: type " + name + " has no exported methods of suitable type"
 
 		// To help the user, see if a pointer receiver would work
-		if methods = suitableMethods(reflect.PointerTo(typ)); len(methods) != 0 {
+		if ms = suitableMethods(reflect.PointerTo(typ)); len(ms) != 0 {
 			str += " (hint: pass a pointer to value of that type)"
 		}
 
@@ -69,16 +69,16 @@ func (p *Plugin) Start(v any, info *PluginInfo, conn io.ReadWriteCloser, ctxKey 
 	p.name = name
 	p.rec = rec
 	p.typ = typ
-	p.methods = methods
+	p.methods = ms
 	p.ctxKey = ctxKey
 
 	// If the plugin has a hook method named "UseHook", initialize the hook channel and pass it to the hook method
-	if m, ok := methods[useAsyncHook]; ok {
+	if m, ok := ms[useAsyncHook]; ok {
 		p.async = make(chan any)
 
 		// Call the hook method with the hook channel
 		m.method.Func.Call([]reflect.Value{p.rec, reflect.ValueOf(p.async)})
-		delete(methods, useAsyncHook)
+		delete(ms, useAsyncHook)
 	}
 
 	p.codec = newCodec(conn)
@@ -86,6 +86,8 @@ func (p *Plugin) Start(v any, info *PluginInfo, conn io.ReadWriteCloser, ctxKey 
 		p.awg.Wait() // Wait for async writer to complete
 		p.codec.close()
 	}()
+
+	info.Functions = ms.functions()
 
 	// Send handshake containing plugin information to the socket
 	if err := p.codec.write(info); err != nil {

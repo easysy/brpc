@@ -25,8 +25,22 @@ var (
 
 // PluginInfo holds metadata about a plugin.
 type PluginInfo struct {
-	Name    string `json:"name,omitempty"`
-	Version string `json:"version,omitempty"`
+	Name      string     `json:"name,omitempty"`
+	Version   string     `json:"version,omitempty"`
+	Functions []Function `json:"functions,omitempty"`
+}
+
+type Function struct {
+	Name   string  `json:"name,omitempty"`
+	Input  *Entity `json:"input,omitempty"`
+	Output *Entity `json:"output,omitempty"`
+}
+
+type Entity struct {
+	Name      string   `json:"name,omitempty"`
+	Type      string   `json:"type,omitempty"`
+	Mandatory bool     `json:"mandatory,omitempty"`
+	Fields    []Entity `json:"fields,omitempty"`
 }
 
 // AsyncData represents data received asynchronously from a plugin.
