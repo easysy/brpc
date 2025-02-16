@@ -78,12 +78,12 @@ func main() {
 	fmt.Println(resp)
 
 	// Get a list of connected plugins
-	fmt.Println("list:", s.Connected())
+	fmt.Println("list:", s.Connected(false))
 
 	// If you need, you can stop any plugin
 	s.Unplug("1", pn)
 
-	fmt.Println("list:", s.Connected())
+	fmt.Println("list:", s.Connected(false))
 
 	// Shutdown the socket
 	if err = s.Shutdown("2"); err != nil {

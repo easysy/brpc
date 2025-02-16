@@ -179,8 +179,9 @@ func TestBRPC(t *testing.T) {
 		t.Fatalf("%s not connected before timeout", pi.Name)
 	}
 
-	infos := sock.Connected()
-	equal(t, pi, infos[0])
+	infos := sock.Connected(true)
+	equal(t, pi.Name, infos[pn].Name)
+	equal(t, pi.Version, infos[pn].Version)
 
 	tests := []struct {
 		name string
@@ -291,5 +292,5 @@ func TestBRPC(t *testing.T) {
 	}
 
 	sock.Unplug("", pn)
-	equal(t, 0, len(sock.Connected()))
+	equal(t, 0, len(sock.Connected(false)))
 }
