@@ -30,10 +30,36 @@ type PluginInfo struct {
 	Functions []Function `json:"functions,omitempty"`
 }
 
+// DeepCopy creates a copy of the PluginInfo instance.
+// If `full` is true, it performs a deep copy of all Functions; otherwise, only Name and Version are copied.
+func (p *PluginInfo) DeepCopy(full bool) *PluginInfo {
+	c := &PluginInfo{
+		Name:    p.Name,
+		Version: p.Version,
+	}
+
+	if full {
+		c.Functions = make([]Function, len(p.Functions))
+		for i, fn := range p.Functions {
+			c.Functions[i] = fn.DeepCopy()
+		}
+	}
+
+	return c
+}
+
 type Function struct {
 	Name   string  `json:"name,omitempty"`
 	Input  *Entity `json:"input,omitempty"`
 	Output *Entity `json:"output,omitempty"`
+}
+
+func (f *Function) DeepCopy() Function {
+	return Function{
+		Name:   f.Name,
+		Input:  f.Input.DeepCopy(),
+		Output: f.Output.DeepCopy(),
+	}
 }
 
 type Entity struct {
@@ -41,6 +67,24 @@ type Entity struct {
 	Type      string   `json:"type,omitempty"`
 	Mandatory bool     `json:"mandatory,omitempty"`
 	Fields    []Entity `json:"fields,omitempty"`
+}
+
+func (e *Entity) DeepCopy() *Entity {
+	if e == nil {
+		return nil
+	}
+
+	copyFields := make([]Entity, len(e.Fields))
+	for i, field := range e.Fields {
+		copyFields[i] = *field.DeepCopy()
+	}
+
+	return &Entity{
+		Name:      e.Name,
+		Type:      e.Type,
+		Mandatory: e.Mandatory,
+		Fields:    copyFields,
+	}
 }
 
 // AsyncData represents data received asynchronously from a plugin.

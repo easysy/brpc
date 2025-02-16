@@ -6,6 +6,8 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -78,7 +80,16 @@ LOOP:
 		slog.Error("shutdown socket", "error", err)
 	}
 
-	s.wg.Wait() // Wait until all plugins are stopped
+	close(s.async)
+}
+
+func nameIterator(name string) string {
+	if i := strings.LastIndex(name, "#"); i != -1 {
+		if n, err := strconv.Atoi(name[i+1:]); err == nil {
+			return name[:i+1] + strconv.Itoa(n+1)
+		}
+	}
+	return name + "#1"
 }
 
 // handleConnection manages the connection lifecycle for a plugin.
@@ -89,8 +100,8 @@ func (s *Socket) handleConnection(c *codec) {
 	}()
 
 	// Handle handshake to read plugin information
-	var info PluginInfo
-	if err := c.read(&info); err != nil {
+	info := new(PluginInfo)
+	if err := c.read(info); err != nil {
 		slog.Error("handshake", "error", err)
 		return
 	}
@@ -98,7 +109,7 @@ func (s *Socket) handleConnection(c *codec) {
 	plug := &processor{PluginInfo: info, codec: c, pending: make(map[uint64]*call), end: make(chan struct{})}
 
 	go s.sendAsync(&AsyncData{Name: info.Name, Payload: info.Version + " connected"})
-	s.plugins.Store(info.Name, plug)
+	s.plugins.StoreIfExists(info.Name, plug, nameIterator)
 
 	s.mu.Lock()
 	// If the plugin has a waiter, let it know that the plugin is connected
@@ -109,7 +120,7 @@ func (s *Socket) handleConnection(c *codec) {
 
 	defer func() {
 		s.plugins.Delete(info.Name)
-		go s.sendAsync(&AsyncData{Name: info.Name, Payload: info.Version + " disconnected"})
+		s.sendAsync(&AsyncData{Name: info.Name, Payload: info.Version + " disconnected"})
 	}()
 
 	if !s.shutdown.Load() {
@@ -185,8 +196,8 @@ func (s *Socket) Async() (*AsyncData, error) {
 }
 
 // WaitFor waits for a specified plugin to connect within a given timeout duration.
-// If the plugin connects within the timeout, it returns 'true'.
-// If the timeout expires before the plugin connects, it returns 'false'.
+// If the plugin connects within the timeout, it returns `true`.
+// If the timeout expires before the plugin connects, it returns `false`.
 func (s *Socket) WaitFor(name string, timeout time.Duration) bool {
 	s.mu.Lock()
 	c := make(chan struct{}, 1)
@@ -209,19 +220,28 @@ func (s *Socket) WaitFor(name string, timeout time.Duration) bool {
 }
 
 // Connected returns a list of connected plugins.
-func (s *Socket) Connected() []PluginInfo {
-	connected := make([]PluginInfo, 0)
+// If `full` is true, all Functions are included; otherwise, only Name and Version are returned.
+func (s *Socket) Connected(full bool) map[string]*PluginInfo {
+	connected := make(map[string]*PluginInfo)
 
-	s.plugins.Range(func(_ string, p *processor) bool {
-		connected = append(connected, p.PluginInfo)
+	s.plugins.Range(func(name string, p *processor) bool {
+		connected[name] = p.DeepCopy(full)
 		return true
 	})
 
 	return connected
 }
 
+// PluginInfo returns a full plugin info based on its name.
+func (s *Socket) PluginInfo(name string) *PluginInfo {
+	if p, ok := s.plugins.Load(name); ok {
+		return p.DeepCopy(true)
+	}
+	return nil
+}
+
 // Unplug sends a stop request to a plugin based on its name.
-// An optional 'id' can be provided to trace the request.
+// An optional `id` can be provided to trace the request.
 func (s *Socket) Unplug(id string, name string) {
 	if plug, ok := s.plugins.Load(name); ok && !plug.shutdown.Load() {
 		plug.stop(id)
@@ -229,13 +249,11 @@ func (s *Socket) Unplug(id string, name string) {
 }
 
 // Shutdown gracefully stops all running plugins and stops the Socket.
-// An optional 'id' can be provided to trace the request.
+// An optional `id` can be provided to trace the request.
 func (s *Socket) Shutdown(id string) error {
 	if s.shutdown.Swap(true) {
 		return nil
 	}
-
-	defer close(s.async)
 
 	s.plugins.Range(func(_ string, p *processor) bool {
 		if !p.shutdown.Load() {
@@ -256,7 +274,7 @@ type call struct {
 
 // processor implements the socket-side plugin processor.
 type processor struct {
-	PluginInfo
+	*PluginInfo
 
 	codec *codec
 
