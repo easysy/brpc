@@ -7,12 +7,12 @@ import (
 // Collector is a generic interface that allows storing, listing, loading, and deleting key-value pairs.
 // K is the type of the key, and V is the type of the value.
 type Collector[K comparable, V any] interface {
-	Store(key K, val V)                      // Store saves the value associated with the given key in the map
-	StoreIfExists(key K, val V, f func(K) K) // StoreIfExists saves the value associated with the given key in the map with a key func
-	Load(key K) (V, bool)                    // Load returns the value stored in the map for a key and a boolean indicating whether the key present
-	Delete(key K)                            // Delete deletes the value for a key
-	LoadAndDelete(key K) (V, bool)           // LoadAndDelete deletes the value for a key, returns the previous value if any and a boolean indicating whether the key present
-	Range(f func(K, V) bool)                 // Range calls f sequentially for each key and value present in the map
+	Store(key K, val V)                                                 // Store saves the value associated with the given key in the map
+	StoreWithKeyResolver(key K, val V, f func(K) K, attempts uint) bool // StoreWithKeyResolver attempts to store a key-value pair in the map
+	Load(key K) (V, bool)                                               // Load returns the value stored in the map for a key and a boolean indicating whether the key present
+	Delete(key K)                                                       // Delete deletes the value for a key
+	LoadAndDelete(key K) (V, bool)                                      // LoadAndDelete deletes the value for a key, returns the previous value if any and a boolean indicating whether the key present
+	Range(f func(K, V) bool)                                            // Range calls f sequentially for each key and value present in the map
 }
 
 // New returns a new instance of a Collector, initialized with an empty map.
@@ -34,23 +34,43 @@ func (c *collector[K, V]) Store(key K, val V) {
 	c.mu.Unlock()
 }
 
-func (c *collector[K, V]) exists(key K) bool {
-	_, ok := c.mp[key]
-	return ok
-}
-
-// StoreIfExists saves the value associated with the given key in the map.
+// StoreWithKeyResolver attempts to store a key-value pair in the map.
 //
-// It checks if the key exists in the map, if it does, it continuously calls `f` to modify the key until a unique one is found.
+//   - If the key does not exist, it stores the value immediately and returns true.
+//   - If the key exists and `f` is provided, it modifies the key using `f`
+//     until a unique key is found (up to `attempts` times).
+//   - If `f` is nil or the attempt limit is reached, it returns false without storing the value.
 //
-// It will panic `f` is nil. It locks the map for writing.
-func (c *collector[K, V]) StoreIfExists(key K, val V, f func(K) K) {
+// It locks the map for writing.
+func (c *collector[K, V]) StoreWithKeyResolver(key K, val V, f func(K) K, attempts uint) bool {
 	c.mu.Lock()
-	for c.exists(key) {
-		key = f(key)
+	defer c.mu.Unlock()
+
+	// If the key does not exist, store it immediately
+	if !c.exists(key) {
+		c.mp[key] = val
+		return true
 	}
-	c.mp[key] = val
-	c.mu.Unlock()
+
+	// If no resolver function is provided or attempts are zero, fail
+	if f == nil || attempts == 0 {
+		return false
+	}
+
+	// Attempt to resolve key conflict by modifying the key
+	for attempts > 0 {
+		key = f(key)
+		attempts--
+
+		// If key becomes unique, store the value and return true
+		if !c.exists(key) {
+			c.mp[key] = val
+			return true
+		}
+	}
+
+	// If we run out of attempts without finding a unique key, return false
+	return false
 }
 
 // Load returns the value stored in the map for a key and a boolean indicating whether the key present.
@@ -88,7 +108,12 @@ func (c *collector[K, V]) Range(f func(K, V) bool) {
 	defer c.mu.RUnlock()
 	for k, v := range c.mp {
 		if !f(k, v) {
-			break
+			return
 		}
 	}
+}
+
+func (c *collector[K, V]) exists(key K) bool {
+	_, ok := c.mp[key]
+	return ok
 }
