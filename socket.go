@@ -6,8 +6,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -24,12 +22,15 @@ type Socket struct {
 	shutdown atomic.Bool                             // true when Socket is in shutdown
 	wg       sync.WaitGroup                          // wg is required to gracefully stop all plugins
 
+	keySequencer func(name string) string
+	attempts     uint
+
 	mu      sync.Mutex
 	waiters map[string]chan struct{}
 }
 
 // Serve initializes the Socket and starts listen for incoming connections.
-func (s *Socket) Serve(listener net.Listener) {
+func (s *Socket) Serve(listener net.Listener, opts ...Options) {
 	s.shutdown.Store(false)
 
 	s.listener = listener
@@ -40,6 +41,10 @@ func (s *Socket) Serve(listener net.Listener) {
 		s.waiters = make(map[string]chan struct{})
 	}
 	s.async = make(chan *AsyncData)
+
+	for _, opt := range opts {
+		opt.apply(s)
+	}
 
 	go s.serve()
 }
@@ -83,15 +88,6 @@ LOOP:
 	close(s.async)
 }
 
-func nameIterator(name string) string {
-	if i := strings.LastIndex(name, "#"); i != -1 {
-		if n, err := strconv.Atoi(name[i+1:]); err == nil {
-			return name[:i+1] + strconv.Itoa(n+1)
-		}
-	}
-	return name + "#1"
-}
-
 // handleConnection manages the connection lifecycle for a plugin.
 func (s *Socket) handleConnection(c *codec) {
 	defer func() {
@@ -106,10 +102,30 @@ func (s *Socket) handleConnection(c *codec) {
 		return
 	}
 
-	plug := &processor{PluginInfo: info, codec: c, pending: make(map[uint64]*call), end: make(chan struct{})}
+	// Initialize the plugin processor
+	plug := &processor{PluginInfo: info, codec: c}
+
+	// Handling plugin registration with optional name sequencing
+	if !s.plugins.StoreWithKeyResolver(info.Name, plug, s.keySequencer, s.attempts) {
+		msg := "handshake (conflict) plugin with the same name is already connected"
+
+		if s.keySequencer != nil {
+			msg = "handshake (conflict) unique name not found after attempts"
+		}
+
+		slog.Warn(msg, "name", info.Name)
+
+		if err := c.write(&Envelope{Method: MethodShutdown, Error: msg}); err != nil {
+			slog.Error("handshake ", "error", err)
+		}
+		return
+	}
+
+	// Finish initializing the plugin processor
+	plug.pending = make(map[uint64]*call)
+	plug.end = make(chan struct{})
 
 	go s.sendAsync(&AsyncData{Name: info.Name, Payload: info.Version + " connected"})
-	s.plugins.StoreIfExists(info.Name, plug, nameIterator)
 
 	s.mu.Lock()
 	// If the plugin has a waiter, let it know that the plugin is connected

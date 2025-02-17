@@ -137,6 +137,9 @@ func (p *Plugin) listen() (err error) {
 			shutdown = true
 		case e = <-envelope:
 			shutdown = e.Method == MethodShutdown
+			if e.Error != "" {
+				slog.Error(e.Error)
+			}
 		}
 
 		// If it's a shutdown request or interrupt/termination syscall is received,
