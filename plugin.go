@@ -17,7 +17,6 @@ import (
 type Plugin struct {
 	codec *codec
 	wg    sync.WaitGroup
-	awg   sync.WaitGroup
 
 	name    string        // name of plugin
 	rec     reflect.Value // receiver of methods for the plugin
@@ -83,7 +82,7 @@ func (p *Plugin) Start(v any, info *PluginInfo, conn io.ReadWriteCloser, ctxKey 
 
 	p.codec = newCodec(conn)
 	defer func() {
-		p.awg.Wait() // Wait for async writer to complete
+		p.wg.Wait() // Wait for all pending requests and async writer to complete
 		p.codec.close()
 	}()
 
@@ -99,7 +98,7 @@ func (p *Plugin) Start(v any, info *PluginInfo, conn io.ReadWriteCloser, ctxKey 
 		end := make(chan struct{})
 		defer close(end)
 
-		p.awg.Add(1)
+		p.wg.Add(1)
 		go p.asyncWriter(end)
 	}
 
@@ -142,11 +141,9 @@ func (p *Plugin) listen() (err error) {
 			}
 		}
 
-		// If it's a shutdown request or interrupt/termination syscall is received,
-		// stop the plugin after processing pending requests
+		// If it's a shutdown request or interrupt/termination syscall is received stop the plugin
 		if shutdown {
 			slog.Info("stop the plugin")
-			p.wg.Wait() // Wait for all pending requests to complete
 			return
 		}
 
@@ -212,7 +209,7 @@ func (p *Plugin) asyncWriter(end chan struct{}) {
 	slog.Info("async writer started")
 	defer func() {
 		slog.Info("async writer stopped")
-		p.awg.Done()
+		p.wg.Done()
 	}()
 
 	e := &Envelope{Method: MethodAsync}
