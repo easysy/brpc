@@ -134,14 +134,12 @@ func (s *Socket) handleConnection(c *codec) {
 	}
 	s.mu.Unlock()
 
-	defer func() {
-		s.plugins.Delete(info.Name)
-		s.sendAsync(&AsyncData{Name: info.Name, Payload: info.Version + " disconnected"})
-	}()
-
 	if !s.shutdown.Load() {
 		plug.receive(&s.wg, s.sendAsync) // Start receiving messages for this plugin
 	}
+
+	s.plugins.Delete(info.Name)
+	s.sendAsync(&AsyncData{Name: info.Name, Payload: info.Version + " disconnected"})
 }
 
 // sendAsync sends async data to async channel.
@@ -259,7 +257,7 @@ func (s *Socket) PluginInfo(name string) *PluginInfo {
 // Unplug sends a stop request to a plugin based on its name.
 // An optional `id` can be provided to trace the request.
 func (s *Socket) Unplug(id string, name string) {
-	if plug, ok := s.plugins.Load(name); ok && !plug.shutdown.Load() {
+	if plug, ok := s.plugins.Load(name); ok && !plug.shutdown.Swap(true) {
 		plug.stop(id)
 	}
 }
@@ -272,7 +270,7 @@ func (s *Socket) Shutdown(id string) error {
 	}
 
 	s.plugins.Range(func(_ string, p *processor) bool {
-		if !p.shutdown.Load() {
+		if !p.shutdown.Swap(true) {
 			go p.stop(id)
 		}
 		return true
@@ -392,12 +390,8 @@ func (p *processor) post(wg *sync.WaitGroup, async func(a *AsyncData), e *Envelo
 }
 
 func (p *processor) stop(trace string) {
-	p.shutdown.Store(true)
-
-	e := &Envelope{Trace: trace, Method: MethodShutdown}
-	if err := p.codec.write(e); err != nil {
+	if err := p.codec.write(&Envelope{Trace: trace, Method: MethodShutdown}); err != nil {
 		slog.Error("shutdown plugin", "name", p.PluginInfo.Name, "version", p.PluginInfo.Version, "error", err)
 	}
-
 	<-p.end
 }
