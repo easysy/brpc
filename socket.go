@@ -25,8 +25,7 @@ type Socket struct {
 	keySequencer func(name string) string
 	attempts     uint
 
-	mu      sync.Mutex
-	waiters map[string]chan struct{}
+	waiters collector.Collector[string, chan struct{}]
 }
 
 // Serve initializes the Socket and starts listen for incoming connections.
@@ -38,7 +37,7 @@ func (s *Socket) Serve(listener net.Listener, opts ...Options) {
 		s.plugins = collector.New[string, *processor]()
 	}
 	if s.waiters == nil {
-		s.waiters = make(map[string]chan struct{})
+		s.waiters = collector.New[string, chan struct{}]()
 	}
 	s.async = make(chan *AsyncData)
 
@@ -127,12 +126,10 @@ func (s *Socket) handleConnection(c *codec) {
 
 	go s.sendAsync(&AsyncData{Name: info.Name, Payload: info.Version + " connected"})
 
-	s.mu.Lock()
 	// If the plugin has a waiter, let it know that the plugin is connected
-	if w, ok := s.waiters[info.Name]; ok {
-		w <- struct{}{}
+	if w, ok := s.waiters.LoadAndDelete(info.Name); ok {
+		close(w)
 	}
-	s.mu.Unlock()
 
 	if !s.shutdown.Load() {
 		plug.receive(&s.wg, s.sendAsync) // Start receiving messages for this plugin
@@ -209,24 +206,15 @@ func (s *Socket) Async() (*AsyncData, error) {
 	return nil, ErrShutdown
 }
 
-// WaitFor waits for a specified plugin to connect within a given timeout duration.
+// WaitFor waits for the specified plugin to connect within a given timeout duration.
 // If the plugin connects within the timeout, it returns `true`.
 // If the timeout expires before the plugin connects, it returns `false`.
 func (s *Socket) WaitFor(name string, timeout time.Duration) bool {
-	s.mu.Lock()
-	c := make(chan struct{}, 1)
-	s.waiters[name] = c
-	s.mu.Unlock()
-
-	defer func() {
-		s.mu.Lock()
-		close(c)
-		delete(s.waiters, name)
-		s.mu.Unlock()
-	}()
+	w := make(chan struct{}, 1)
+	s.waiters.Store(name, w)
 
 	select {
-	case <-c:
+	case <-w:
 		return true
 	case <-time.After(timeout):
 		return false

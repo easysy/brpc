@@ -175,7 +175,7 @@ func TestBRPC(t *testing.T) {
 		equal(t, nil, err)
 	}()
 
-	if !sock.WaitFor(pi.Name, time.Second*30) {
+	if !sock.WaitFor(pi.Name, time.Second) {
 		t.Fatalf("%s not connected before timeout", pi.Name)
 	}
 
