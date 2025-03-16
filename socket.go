@@ -25,7 +25,8 @@ type Socket struct {
 	keySequencer func(name string) string
 	attempts     uint
 
-	waiters collector.Collector[string, chan struct{}]
+	callback func(info *PluginInfo)
+	waiters  collector.Collector[string, chan struct{}]
 }
 
 // Serve initializes the Socket and starts listen for incoming connections.
@@ -136,7 +137,11 @@ func (s *Socket) handleConnection(c *codec) {
 	}
 
 	s.plugins.Delete(info.Name)
-	s.sendAsync(&AsyncData{Name: info.Name, Payload: info.Version + " disconnected"})
+	go s.sendAsync(&AsyncData{Name: info.Name, Payload: info.Version + " disconnected"})
+
+	if s.callback != nil {
+		s.callback(info)
+	}
 }
 
 // sendAsync sends async data to async channel.
@@ -146,6 +151,11 @@ func (s *Socket) sendAsync(a *AsyncData) {
 	case s.async <- a:
 	case <-time.NewTimer(time.Second).C:
 	}
+}
+
+// RegisterCallback registers a callback function that will be called whenever a plugin is disconnected.
+func (s *Socket) RegisterCallback(callback func(info *PluginInfo)) {
+	s.callback = callback
 }
 
 // Call invokes the named method of the specified plugin with the provided payload,

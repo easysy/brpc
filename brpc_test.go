@@ -157,9 +157,16 @@ func (s *TestType) privateMethod(_ context.Context, _ struct{}) (string, error) 
 const pn = "TestPlugin"
 
 func TestBRPC(t *testing.T) {
+	c := make(chan string)
+	callback := func(info *brpc.PluginInfo) {
+		c <- info.Name
+		close(c)
+	}
+
 	lis := NewMockListener()
 	sock := new(brpc.Socket)
 	sock.Serve(lis)
+	sock.RegisterCallback(callback)
 
 	pi := brpc.PluginInfo{
 		Name:    pn,
@@ -292,5 +299,5 @@ func TestBRPC(t *testing.T) {
 	}
 
 	sock.Unplug("", pn)
-	equal(t, 0, len(sock.Connected(false)))
+	equal(t, pn, <-c)
 }
