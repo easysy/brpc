@@ -220,7 +220,7 @@ func (s *Socket) Async() (*AsyncData, error) {
 // If the plugin connects within the timeout, it returns `true`.
 // If the timeout expires before the plugin connects, it returns `false`.
 func (s *Socket) WaitFor(name string, timeout time.Duration) bool {
-	w := make(chan struct{}, 1)
+	w := make(chan struct{})
 	s.waiters.Store(name, w)
 
 	select {
