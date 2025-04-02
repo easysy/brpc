@@ -158,7 +158,10 @@ const pn = "TestPlugin"
 
 func TestBRPC(t *testing.T) {
 	c := make(chan string)
-	callback := func(info *brpc.PluginInfo) {
+	callback := func(info *brpc.PluginInfo, graceful bool) {
+		if graceful {
+			t.Logf("plugin %s shutdowned gracefully", pn)
+		}
 		c <- info.Name
 		close(c)
 	}

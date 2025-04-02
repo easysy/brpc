@@ -16,6 +16,7 @@ This maintains flexibility and reduces complexity.
 significantly reducing the risk of port congestion and simplifying network configuration.
 
 ### Technical Approach
+
 To ensure independence between the central service and plugins, JSON is used as the primary data protocol,
 while GOB handles framework-level communication. This architecture allows for lightweight,
 extensible interactions with clients and easy data serialization across different extensions.
@@ -51,6 +52,9 @@ func main() {
 
 	s := new(brpc.Socket)
 	s.Serve(lis)
+	s.RegisterCallback(func(info *brpc.PluginInfo, graceful bool) {
+		fmt.Printf("Callback: plugin %s disconnected, gracefully: '%v'\n", info.Name, graceful)
+	})
 
 	// Read async messages
 	go func() {
@@ -59,7 +63,7 @@ func main() {
 			if e != nil {
 				return
 			}
-			fmt.Println(async)
+			fmt.Println("Async:", async)
 		}
 	}()
 
@@ -75,15 +79,15 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Println(resp)
+	fmt.Println("Response:", resp)
 
 	// Get a list of connected plugins
-	fmt.Println("list:", s.Connected(false))
+	fmt.Println("List:", s.Connected(false))
 
 	// If you need, you can stop any plugin
 	s.Unplug("1", pn)
 
-	fmt.Println("list:", s.Connected(false))
+	fmt.Println("List:", s.Connected(false))
 
 	// Shutdown the socket
 	if err = s.Shutdown("2"); err != nil {
