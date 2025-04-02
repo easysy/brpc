@@ -25,7 +25,7 @@ type Socket struct {
 	keySequencer func(name string) string
 	attempts     uint
 
-	callback func(info *PluginInfo)
+	callback func(info *PluginInfo, graceful bool)
 	waiters  collector.Collector[string, chan struct{}]
 }
 
@@ -122,9 +122,10 @@ func (s *Socket) handleConnection(c *codec) {
 	}
 
 	// Finish initializing the plugin processor
-	plug.pending = make(map[uint64]*call)
+	plug.pending = collector.New[uint64, *call]()
 	plug.end = make(chan struct{})
 
+	s.wg.Add(1)
 	go s.sendAsync(&AsyncData{Name: info.Name, Payload: info.Version + " connected"})
 
 	// If the plugin has a waiter, let it know that the plugin is connected
@@ -137,16 +138,20 @@ func (s *Socket) handleConnection(c *codec) {
 	}
 
 	s.plugins.Delete(info.Name)
+
+	s.wg.Add(1)
 	go s.sendAsync(&AsyncData{Name: info.Name, Payload: info.Version + " disconnected"})
 
 	if s.callback != nil {
-		s.callback(info)
+		s.callback(info, plug.shutdown.Load())
 	}
 }
 
 // sendAsync sends async data to async channel.
 // It skips sending to async channel if there are no readers for a second, to avoid hanging goroutines.
 func (s *Socket) sendAsync(a *AsyncData) {
+	defer s.wg.Done()
+
 	select {
 	case s.async <- a:
 	case <-time.NewTimer(time.Second).C:
@@ -154,7 +159,12 @@ func (s *Socket) sendAsync(a *AsyncData) {
 }
 
 // RegisterCallback registers a callback function that will be called whenever a plugin is disconnected.
-func (s *Socket) RegisterCallback(callback func(info *PluginInfo)) {
+//
+// callback: a function that receives plugin information and a graceful flag.
+//   - info: details about the disconnected plugin;
+//   - graceful: indicates whether the plugin was disconnected normally (true)
+//     via a stop request or unexpectedly (false) due to a crash or termination.
+func (s *Socket) RegisterCallback(callback func(info *PluginInfo, graceful bool)) {
 	s.callback = callback
 }
 
@@ -290,9 +300,8 @@ type processor struct {
 
 	codec *codec
 
-	mu       sync.Mutex
-	seq      uint64
-	pending  map[uint64]*call
+	seq      atomic.Uint64
+	pending  collector.Collector[uint64, *call]
 	shutdown atomic.Bool
 	end      chan struct{}
 }
@@ -307,22 +316,15 @@ func (p *processor) call(trace, method string, payload any) (any, error) {
 		return nil, err
 	}
 
-	c := &call{response: make(chan any, 1)}
+	e.Seq = p.seq.Load()
+	p.seq.Add(1)
 
-	p.mu.Lock()
-	seq := p.seq
-	p.pending[seq] = c
-	p.seq++
-	p.mu.Unlock()
+	c := &call{response: make(chan any)}
+	p.pending.Store(e.Seq, c)
 
-	e.Seq = seq
 	if err := p.codec.write(e); err != nil {
-		p.mu.Lock()
-		delete(p.pending, seq)
-		p.mu.Unlock()
-
-		c.error = err
-		close(c.response)
+		p.pending.Delete(e.Seq)
+		return nil, err
 	}
 
 	return <-c.response, c.error
@@ -334,44 +336,43 @@ func (p *processor) receive(wg *sync.WaitGroup, async func(a *AsyncData)) {
 	for {
 		e := new(Envelope)
 		if err := p.codec.read(e); err != nil {
-			p.mu.Lock()
-			for seq, c := range p.pending {
-				delete(p.pending, seq)
+			p.pending.Range(func(u uint64, c *call) bool {
 				c.error = err
 				close(c.response)
-			}
-			p.mu.Unlock()
+				return true
+			})
 			return
 		}
+
+		if e.Method == MethodAsync {
+			wg.Add(1)
+			go p.async(async, e)
+			continue
+		}
+
+		c, ok := p.pending.LoadAndDelete(e.Seq)
+		if !ok {
+			slog.Error("no pending call for", "envelop", e)
+			continue
+		}
+
 		wg.Add(1)
-		go p.post(wg, async, e)
+		go p.post(wg, c, e)
 	}
 }
 
-func (p *processor) post(wg *sync.WaitGroup, async func(a *AsyncData), e *Envelope) {
+func (p *processor) async(async func(a *AsyncData), e *Envelope) {
+	a := &AsyncData{Name: p.Name}
+	if err := e.decode(&a.Payload); err != nil {
+		slog.Error("async payload decode", "error", err)
+		return
+	}
+
+	async(a)
+}
+
+func (p *processor) post(wg *sync.WaitGroup, c *call, e *Envelope) {
 	defer wg.Done()
-
-	if e.Method == MethodAsync {
-		a := &AsyncData{Name: p.Name}
-		if err := e.decode(&a.Payload); err != nil {
-			slog.Error("async payload decode", "error", err)
-			return
-		}
-		go async(a)
-		return
-	}
-
-	seq := e.Seq
-
-	p.mu.Lock()
-	c, ok := p.pending[seq]
-	delete(p.pending, seq)
-	p.mu.Unlock()
-
-	if !ok {
-		slog.Error("no pending call for", "envelop", e)
-		return
-	}
 
 	if e.Error != "" {
 		c.error = errors.New(e.Error)
