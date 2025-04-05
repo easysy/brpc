@@ -12,13 +12,20 @@ const useAsyncHook = "UseAsyncHook"
 
 type methods map[string]*method
 
-func (m methods) functions() []Function {
+func (m methods) functions(fns []Function) []Function {
 	functions := make([]Function, 0, len(m))
+
+	srcFuncMap := make(map[string]Function)
+	for i := range fns {
+		srcFuncMap[fns[i].Name] = fns[i]
+	}
+
 	for k, v := range m {
+		fn := srcFuncMap[k]
 		functions = append(functions, Function{
 			Name:   k,
-			Input:  v.iDesc,
-			Output: v.oDesc,
+			Input:  v.iDesc.merge(fn.Input),
+			Output: v.oDesc.merge(fn.Output),
 		})
 	}
 	return functions
@@ -162,23 +169,28 @@ func describe(t reflect.Type) *Entity {
 		fv := t.Field(n)
 		ft := indirect(fv.Type)
 
+		tag, ok := fv.Tag.Lookup("brpc")
+		if ok && tag == "-" {
+			// Ignore the field if the tag has a skip value.
+			continue
+		}
+
 		fd := Entity{
 			Name:      fv.Name,
 			Type:      ft.Kind().String(),
 			Mandatory: true,
 		}
 
-		tag, ok := fv.Tag.Lookup("json")
+		tag, ok = fv.Tag.Lookup("json")
 		if ok {
-			tags := strings.Split(tag, ",")
-
 			// Ignore the field if the tag has a skip value.
-			if tags[0] == "-" {
+			if tag == "-" {
 				continue
 			}
 
-			fd.Name = tags[0]
+			tags := strings.Split(tag, ",")
 
+			fd.Name = tags[0]
 			if len(tags) > 1 {
 				fd.Mandatory = tags[1] != "omitempty"
 			}
@@ -217,6 +229,10 @@ func describe(t reflect.Type) *Entity {
 		}
 
 		entity.Fields = append(clean(entity.Fields, fd), fd)
+	}
+
+	if t.Kind() == reflect.Struct && entity.Fields == nil {
+		return nil
 	}
 
 	return entity

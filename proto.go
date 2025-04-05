@@ -87,6 +87,53 @@ func (e *Entity) DeepCopy() *Entity {
 	}
 }
 
+func (e *Entity) merge(src *Entity) *Entity {
+	if e == nil {
+		return nil
+	}
+
+	if src == nil || e.Fields == nil {
+		return e
+	}
+
+	origFieldMap := make(map[string]Entity)
+	for i := range e.Fields {
+		origFieldMap[e.Fields[i].Name] = e.Fields[i]
+	}
+
+	srcFieldMap := make(map[string]Entity)
+	for i := range src.Fields {
+		srcFieldMap[src.Fields[i].Name] = src.Fields[i]
+	}
+
+	for k, ov := range origFieldMap {
+		sv, ok := srcFieldMap[k]
+		if !ok {
+			delete(origFieldMap, k)
+			continue
+		}
+		ov.Mandatory = sv.Mandatory
+		if len(ov.Fields) > 0 && len(sv.Fields) > 0 {
+			ov = *ov.merge(&sv)
+		}
+		origFieldMap[k] = ov
+	}
+
+	var fields []Entity
+
+	// Build final fields slice
+	for _, field := range origFieldMap {
+		fields = append(fields, field)
+	}
+
+	return &Entity{
+		Name:      e.Name,
+		Type:      e.Type,
+		Mandatory: src.Mandatory,
+		Fields:    fields,
+	}
+}
+
 // AsyncData represents data received asynchronously from a plugin.
 type AsyncData struct {
 	Name    string `json:"name,omitempty"`
