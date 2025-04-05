@@ -21,8 +21,9 @@ type TestName map[int]*TestStruct
 type TestStruct struct {
 	Field string `json:"field"`
 	Struct
-	Structure Struct `json:"structure,omitempty"`
-	Nested    `json:"nested,omitempty"`
+	Structure    Struct `json:"structure,omitempty"`
+	NotDescribed string `json:"not_described,omitempty" brpc:"-"`
+	Nested       `json:"nested,omitempty"`
 	nested
 }
 
