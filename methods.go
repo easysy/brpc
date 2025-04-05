@@ -12,13 +12,20 @@ const useAsyncHook = "UseAsyncHook"
 
 type methods map[string]*method
 
-func (m methods) functions() []Function {
+func (m methods) functions(fns []Function) []Function {
 	functions := make([]Function, 0, len(m))
+
+	srcFuncMap := make(map[string]Function)
+	for i := range fns {
+		srcFuncMap[fns[i].Name] = fns[i]
+	}
+
 	for k, v := range m {
+		fn := srcFuncMap[k]
 		functions = append(functions, Function{
 			Name:   k,
-			Input:  v.iDesc,
-			Output: v.oDesc,
+			Input:  v.iDesc.merge(fn.Input),
+			Output: v.oDesc.merge(fn.Output),
 		})
 	}
 	return functions

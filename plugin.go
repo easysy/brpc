@@ -87,7 +87,7 @@ func (p *Plugin) Start(v any, info *PluginInfo, conn io.ReadWriteCloser, ctxKey 
 		p.codec.close()
 	}()
 
-	info.Functions = ms.functions()
+	info.Functions = ms.functions(info.Functions)
 
 	// Send handshake containing plugin information to the socket
 	if err := p.codec.write(info); err != nil {
