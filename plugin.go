@@ -3,11 +3,13 @@ package brpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"os/signal"
 	"reflect"
+	"runtime/debug"
 	"sync"
 	"syscall"
 )
@@ -158,9 +160,22 @@ func (p *Plugin) listen() (err error) {
 // It first ensures that the WaitGroup counter is decremented when done,
 // allowing the system to track pending operations for graceful shutdowns.
 func (p *Plugin) thread(e *Envelope) {
+	ctx := context.Background()
+
 	defer p.wg.Done()
 
-	ctx := context.Background()
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Error("panic", "recover", rec, "stack", string(debug.Stack()))
+			e.Error = fmt.Sprintf("panic: %v", rec)
+		}
+
+		// Send the processed response (or error) back through the socket
+		if err := p.codec.write(e); err != nil {
+			slog.ErrorContext(ctx, "thread write envelope", "error", err)
+		}
+	}()
+
 	if e.Trace != "" && p.ctxKey != nil {
 		ctx = context.WithValue(ctx, p.ctxKey, e.Trace)
 	}
@@ -169,11 +184,6 @@ func (p *Plugin) thread(e *Envelope) {
 	if err := p.processor(ctx, e); err != nil {
 		e.Error = err.Error()
 		e.Payload = nil
-	}
-
-	// Send the processed response (or error) back through the socket
-	if err := p.codec.write(e); err != nil {
-		slog.ErrorContext(ctx, "thread write envelope", "error", err)
 	}
 }
 
@@ -189,7 +199,7 @@ func (p *Plugin) processor(ctx context.Context, e *Envelope) error {
 
 	// Create a new instance of the input type and decode the Envelope's Payload into it
 	in := reflect.New(m.iType).Interface()
-	if err := e.decode(&in); err != nil {
+	if err := e.decode(in); err != nil {
 		return err
 	}
 

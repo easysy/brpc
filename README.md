@@ -1,7 +1,9 @@
-# brpc
+# bRPC
 
 ![https://img.shields.io/github/v/tag/easysy/brpc](https://img.shields.io/github/v/tag/easysy/brpc)
 ![https://img.shields.io/github/license/easysy/brpc](https://img.shields.io/github/license/easysy/brpc)
+
+## Overview
 
 `brpc` is a framework that enables servers to initiate Remote Procedure Calls (RPCs) directly on clients,
 flipping the traditional client-to-server communication model.
@@ -25,8 +27,8 @@ extensible interactions with clients and easy data serialization across differen
 
 `brpc` can be installed like any other Go library through `go get`:
 
-```console
-go get github.com/easysy/brpc@latest
+```sh
+  go get github.com/easysy/brpc@latest
 ```
 
 ## Getting Started
