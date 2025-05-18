@@ -124,6 +124,16 @@ func (s *TestType) Interface(_ context.Context, in any) (any, error) {
 	return i, nil
 }
 
+func (s *TestType) Nil(_ context.Context, in *StringParams) (*StringParams, error) {
+	return in, nil
+}
+
+func (s *TestType) Panic(_ context.Context, in *StringParams) (*StringParams, error) {
+	in.A = strings.ToUpper(in.A)
+	in.B = strings.ToUpper(in.B)
+	return in, nil
+}
+
 func (s *TestType) UnsuitableMethodInvalidInputTypeChan(_ context.Context, in chan string) (string, error) {
 	return <-in, nil
 }
@@ -242,6 +252,17 @@ func TestBRPC(t *testing.T) {
 			fn:   "Interface",
 			in:   &StringParams{A: "12.5", B: "1.25"},
 			out:  map[string]any{"A": "12.5", "B": "1.25", "C": "test"},
+		},
+		{
+			name: "Nil",
+			pl:   pn,
+			fn:   "Nil",
+		},
+		{
+			name: "Panic",
+			pl:   pn,
+			fn:   "Panic",
+			err:  errors.New("panic: runtime error: invalid memory address or nil pointer dereference"),
 		},
 		{
 			name: "Unsuitable method invalid input interface type",
