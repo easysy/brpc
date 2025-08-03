@@ -25,9 +25,9 @@ var (
 
 // PluginInfo holds metadata about a plugin.
 type PluginInfo struct {
-	Name      string     `json:"name,omitempty"`
-	Version   string     `json:"version,omitempty"`
-	Functions []Function `json:"functions,omitempty"`
+	Name      string              `json:"name,omitempty"`
+	Version   string              `json:"version,omitempty"`
+	Functions map[string]Function `json:"functions,omitempty"`
 }
 
 // DeepCopy creates a copy of the PluginInfo instance.
@@ -39,9 +39,9 @@ func (p *PluginInfo) DeepCopy(full bool) *PluginInfo {
 	}
 
 	if full {
-		c.Functions = make([]Function, len(p.Functions))
-		for i, fn := range p.Functions {
-			c.Functions[i] = fn.DeepCopy()
+		c.Functions = make(map[string]Function, len(p.Functions))
+		for k, fn := range p.Functions {
+			c.Functions[k] = fn.DeepCopy()
 		}
 	}
 
