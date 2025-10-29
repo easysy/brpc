@@ -390,7 +390,7 @@ func (p *processor) post(wg *sync.WaitGroup, c *call, e *Envelope) {
 
 func (p *processor) stop(trace string) {
 	if err := p.codec.write(&Envelope{Trace: trace, Method: MethodShutdown}); err != nil {
-		slog.Error("shutdown plugin", "name", p.PluginInfo.Name, "version", p.PluginInfo.Version, "error", err)
+		slog.Error("shutdown plugin", "name", p.Name, "version", p.Version, "error", err)
 	}
 	<-p.end
 }
