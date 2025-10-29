@@ -89,19 +89,12 @@ func (s *TestType) Builtin(_ context.Context, in int) (string, error) {
 }
 
 func (s *TestType) Array(_ context.Context, in [3]string) ([]string, error) {
-	out := make([]string, 0, len(in))
-	for _, i := range in {
-		out = append(out, i)
-	}
-	return out, nil
+	return in[:], nil
 }
 
 func (s *TestType) Slice(_ context.Context, in []string) ([]string, error) {
 	out := make([]string, 0, len(in))
-	for _, i := range in {
-		out = append(out, i)
-	}
-	return out, nil
+	return append(out, in...), nil
 }
 
 func (s *TestType) Struct(_ context.Context, in *StringParams) (*StringParams, error) {
