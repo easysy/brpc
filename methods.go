@@ -134,11 +134,11 @@ func cachedDescriptions(t reflect.Type) *Entity {
 func describe(t reflect.Type) *Entity {
 	switch t.Kind() {
 	case reflect.Slice, reflect.Array:
-		desc := cachedDescriptions(t.Elem())
-		if desc != nil {
-			desc.Type = "[]" + desc.Type
+		elem := cachedDescriptions(t.Elem())
+		if elem == nil {
+			return elem
 		}
-		return desc
+		return &Entity{Type: "[]" + elem.Type, Fields: elem.Fields}
 	case reflect.Map:
 		switch t.Key().Kind() {
 		case reflect.String,
