@@ -25,6 +25,8 @@ type TestStruct struct {
 	NotDescribed string `json:"not_described,omitempty" brpc:"-"`
 	Nested       `json:"nested,omitempty"`
 	nested
+	Arrays [][]Struct `json:"arrays,omitempty"`
+	Array  []Struct   `json:"array,omitempty"`
 }
 
 type Struct struct {
@@ -60,6 +62,18 @@ var exp = &brpc.Entity{
 					},
 				},
 				{Name: "field_n", Type: "int"},
+				{Name: "arrays", Type: "[][]struct",
+					Fields: []brpc.Entity{
+						{Name: "field", Type: "string"},
+						{Name: "field_2", Type: "int"},
+					},
+				},
+				{Name: "array", Type: "[]struct",
+					Fields: []brpc.Entity{
+						{Name: "field", Type: "string"},
+						{Name: "field_2", Type: "int"},
+					},
+				},
 			},
 		},
 		{
@@ -79,6 +93,18 @@ var exp = &brpc.Entity{
 					},
 				},
 				{Name: "field_n", Type: "int"},
+				{Name: "arrays", Type: "[][]struct",
+					Fields: []brpc.Entity{
+						{Name: "field", Type: "string"},
+						{Name: "field_2", Type: "int"},
+					},
+				},
+				{Name: "array", Type: "[]struct",
+					Fields: []brpc.Entity{
+						{Name: "field", Type: "string"},
+						{Name: "field_2", Type: "int"},
+					},
+				},
 			},
 		},
 	},
