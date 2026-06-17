@@ -52,11 +52,9 @@ func main() {
 		panic(err)
 	}
 
-	s := new(brpc.Socket)
-	s.Serve(lis)
-	s.RegisterCallback(func(info *brpc.PluginInfo, graceful bool) {
+	s := brpc.NewSocket(lis, brpc.WithCallback(func(info *brpc.PluginInfo, graceful bool) {
 		fmt.Printf("Callback: plugin %s disconnected, gracefully: '%v'\n", info.Name, graceful)
-	})
+	}))
 
 	// Read async messages
 	go func() {
@@ -73,7 +71,7 @@ func main() {
 
 	// Wait for your plugin to be connected
 	if !s.WaitFor(pn, time.Second*30) {
-		panic(pn + "not connected before timeout")
+		panic(pn + " not connected before timeout")
 	}
 
 	var resp any
@@ -84,19 +82,18 @@ func main() {
 	fmt.Println("Response:", resp)
 
 	// Get a list of connected plugins
-	fmt.Println("List:", s.Connected(false))
+	fmt.Println("List:", s.Registered(false))
 
 	// If you need, you can stop any plugin
 	s.Unplug("1", pn)
 
-	fmt.Println("List:", s.Connected(false))
+	fmt.Println("List:", s.Registered(false))
 
 	// Shutdown the socket
 	if err = s.Shutdown("2"); err != nil {
 		panic(err)
 	}
 }
-
 ```
 
 ### Plugin (example)
@@ -141,5 +138,70 @@ func main() {
 		panic(err)
 	}
 }
+```
 
+### Local (example)
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/easysy/brpc"
+)
+
+type MyPlugin struct {
+	hook chan any
+}
+
+func (p *MyPlugin) UseAsyncHook(hook chan any) {
+	p.hook = hook
+}
+
+type AddRequest struct {
+	A int `json:"a"`
+	B int `json:"b"`
+}
+
+func (p *MyPlugin) Add(_ context.Context, in AddRequest) (int, error) {
+	p.hook <- fmt.Sprintf("Add called: %d + %d", in.A, in.B)
+	return in.A + in.B, nil
+}
+
+func main() {
+	info := new(brpc.PluginInfo)
+	info.Name = "your_plugin_name" // The name must be unique for each plugin
+	info.Version = "your_plugin_version"
+	
+	l := brpc.NewLocal([]brpc.Registration{
+		{
+			V:    &MyPlugin{},
+			Info: info,
+		},
+	})
+
+	// Read async messages
+	go func() {
+		for {
+			async, err := l.Async()
+			if err != nil {
+				return
+			}
+			fmt.Println("Async:", async)
+		}
+	}()
+
+	resp, err := l.Call("", "your_plugin_name", "Add", AddRequest{A: 3, B: 4})
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("Response:", resp)
+
+	fmt.Println("List:", l.Registered(false))
+
+	l.Shutdown()
+}
 ```

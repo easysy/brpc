@@ -12,6 +12,7 @@ const useAsyncHook = "UseAsyncHook"
 
 type methods map[string]*method
 
+// functions builds a Function map from ms, merging user-supplied descriptions from fns.
 func (m methods) functions(fns map[string]Function) map[string]Function {
 	functions := make(map[string]Function, len(m))
 
@@ -26,16 +27,23 @@ func (m methods) functions(fns map[string]Function) map[string]Function {
 	return functions
 }
 
-// method holds metadata about a registered method.
 type method struct {
-	method reflect.Method // The reflected method
-	iType  reflect.Type   // Input type of the method
-	oType  reflect.Type   // Output type of the method
-	iDesc  *Entity        // Description of the input data type of the method
-	oDesc  *Entity        // Description of the output data type of the method
+	method reflect.Method
+	iType  reflect.Type // third parameter (after receiver and context)
+	oType  reflect.Type // first return value
+	iDesc  *Entity
+	oDesc  *Entity
 }
 
-// suitableMethods returns suitable methods from the provided type.
+// suitableMethods returns all methods on typ that match the RPC signature:
+//
+//	func (t *T) Method(ctx context.Context, in T1) (T2, error)
+//
+// or the async hook signature:
+//
+//	func (t *T) UseAsyncHook(hook chan any)
+//
+// Non-matching methods are silently skipped.
 func suitableMethods(typ reflect.Type) methods {
 	ms := make(methods)
 
@@ -48,36 +56,28 @@ func suitableMethods(typ reflect.Type) methods {
 			continue
 		}
 
-		// Check that the method has exactly 3 input parameters and 2 output parameters
 		if mType.NumIn() != 3 || mType.NumOut() != 2 {
 			continue
 		}
 
-		// Ensure the second input parameter is of type context.Context
 		if cType := mType.In(1); cType != reflect.TypeFor[context.Context]() {
 			continue
 		}
 
 		iType := mType.In(2)
-
-		// Ensure the second input parameter is not an invalid type, chan, func or interface
 		if unsuitableType(iType, true) {
 			continue
 		}
 
 		oType := mType.Out(0)
-
-		// Ensure the first output parameter is not an invalid type, chan or func
-		if unsuitableType(mType.Out(0), false) {
+		if unsuitableType(oType, false) {
 			continue
 		}
 
-		// Ensure the second output parameter is of type error
 		if eType := mType.Out(1); eType != reflect.TypeFor[error]() {
 			continue
 		}
 
-		// Register the method, storing the input and output types
 		ms[m.Name] = &method{
 			method: m,
 			iType:  iType,
@@ -90,23 +90,15 @@ func suitableMethods(typ reflect.Type) methods {
 	return ms
 }
 
-// isUseAsyncHook checks if a method is the "UseAsyncHook" function with the expected signature.
 func isUseAsyncHook(mName string, mType reflect.Type) bool {
 	if mName != useAsyncHook {
 		return false
 	}
-
-	// Check that the method has exactly 2 input parameters
-	if mType.NumIn() != 2 || mType.NumOut() != 0 {
-		return false
-	}
-
-	// Ensure the second input parameter is a channel of any type
-	return mType.In(1) == reflect.TypeFor[chan any]()
+	return mType.NumIn() == 2 && mType.NumOut() == 0 && mType.In(1) == reflect.TypeFor[chan any]()
 }
 
-// unsuitableType checks if type `t` is unsuitable (invalid type, chan or func)
-// if `i` is true, additionally checks for a non-empty interface.
+// unsuitableType reports whether t is an invalid, chan, or func kind.
+// When i=true, a non-empty interface is also considered unsuitable.
 func unsuitableType(t reflect.Type, i bool) bool {
 	k := t.Kind()
 	if i && k == reflect.Interface {
@@ -115,15 +107,17 @@ func unsuitableType(t reflect.Type, i bool) bool {
 	return k == reflect.Invalid || k == reflect.Chan || k == reflect.Func
 }
 
+// TypeDescription returns a reflected type description of v.
 func TypeDescription(v any) *Entity {
 	return cachedDescriptions(reflect.TypeOf(v))
 }
 
 var cache sync.Map // map[reflect.Type]*Entity
 
-// cachedDescriptions is like describe but uses a cache to avoid repeated work.
 func cachedDescriptions(t reflect.Type) *Entity {
-	t = indirect(t)
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
 	if c, ok := cache.Load(t); ok {
 		return c.(*Entity)
 	}
@@ -159,14 +153,15 @@ func describe(t reflect.Type) *Entity {
 
 	entity := &Entity{Type: t.Kind().String()}
 
-	// Iterate over fields
 	for n := 0; n < t.NumField(); n++ {
 		fv := t.Field(n)
-		ft := indirect(fv.Type)
+		ft := fv.Type
+		for ft.Kind() == reflect.Pointer {
+			ft = ft.Elem()
+		}
 
 		tag, ok := fv.Tag.Lookup("brpc")
 		if ok && tag == "-" {
-			// Ignore the field if the tag has a skip value.
 			continue
 		}
 
@@ -178,7 +173,6 @@ func describe(t reflect.Type) *Entity {
 
 		tag, ok = fv.Tag.Lookup("json")
 		if ok {
-			// Ignore the field if the tag has a skip value.
 			if tag == "-" {
 				continue
 			}
@@ -192,7 +186,6 @@ func describe(t reflect.Type) *Entity {
 		}
 
 		if fv.Anonymous && !ok {
-			// Ignore embedded fields of unexported non-struct types.
 			if !fv.IsExported() && ft.Kind() != reflect.Struct {
 				continue
 			}
@@ -209,7 +202,6 @@ func describe(t reflect.Type) *Entity {
 
 			continue
 		} else if !fv.IsExported() {
-			// Ignore unexported non-embedded fields.
 			continue
 		}
 
@@ -231,13 +223,6 @@ func describe(t reflect.Type) *Entity {
 	}
 
 	return entity
-}
-
-func indirect(t reflect.Type) reflect.Type {
-	if t.Kind() == reflect.Ptr {
-		return indirect(t.Elem())
-	}
-	return t
 }
 
 func clean(slice []Entity, elems ...Entity) []Entity {

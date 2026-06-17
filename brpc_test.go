@@ -153,7 +153,7 @@ func (s *TestType) UnsuitableMethodInvalidSignature(in *FloatParams) (float64, e
 	return in.A + in.B, nil
 }
 
-func (s *TestType) privateMethod(_ context.Context, _ struct{}) (string, error) {
+func (s *TestType) privateMethod(_ context.Context, _ struct{}) (string, error) { // nolint:unused
 	return "", nil
 }
 
@@ -163,16 +163,14 @@ func TestBRPC(t *testing.T) {
 	c := make(chan string)
 	callback := func(info *brpc.PluginInfo, graceful bool) {
 		if graceful {
-			t.Logf("plugin %s shutdowned gracefully", pn)
+			t.Logf("plugin %s terminated gracefully", pn)
 		}
 		c <- info.Name
 		close(c)
 	}
 
 	lis := NewMockListener()
-	sock := new(brpc.Socket)
-	sock.Serve(lis)
-	sock.RegisterCallback(callback)
+	sock := brpc.NewSocket(lis, brpc.WithCallback(callback))
 
 	pi := brpc.PluginInfo{
 		Name:    pn,
@@ -192,7 +190,7 @@ func TestBRPC(t *testing.T) {
 		t.Fatalf("%s not connected before timeout", pi.Name)
 	}
 
-	infos := sock.Connected(true)
+	infos := sock.Registered(true)
 	equal(t, pi.Name, infos[pn].Name)
 	equal(t, pi.Version, infos[pn].Version)
 
