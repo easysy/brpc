@@ -6,32 +6,34 @@ import (
 	"errors"
 )
 
-// init registers types for Gob encoding. This allows these types to be properly serialized
-// and deserialized over a network connection using Gob encoding.
 func init() {
 	gob.Register(new(PluginInfo))
 	gob.Register(new(Envelope))
 }
 
 const (
-	MethodAsync    = "Async"
+	// MethodAsync is the envelope method name used to deliver async plugin notifications.
+	MethodAsync = "Async"
+	// MethodShutdown is the envelope method name used to request or signal a plugin stop.
 	MethodShutdown = "Shutdown"
 )
 
 var (
-	ErrShutdown       = errors.New("connection is shut down")
+	// ErrShutdown is returned when a call is made after shutdown has been initiated.
+	ErrShutdown = errors.New("connection is shut down")
+	// ErrMethodNotFound is returned when the requested method is not registered on the plugin.
 	ErrMethodNotFound = errors.New("method not found")
 )
 
-// PluginInfo holds metadata about a plugin.
+// PluginInfo holds identifying metadata for a plugin.
 type PluginInfo struct {
 	Name      string              `json:"name,omitempty"`
 	Version   string              `json:"version,omitempty"`
 	Functions map[string]Function `json:"functions,omitempty"`
 }
 
-// DeepCopy creates a copy of the PluginInfo instance.
-// If `full` is true, it performs a deep copy of all Functions; otherwise, only Name and Version are copied.
+// DeepCopy returns a copy of p.
+// full=true copies the entire Functions map; false copies only Name and Version.
 func (p *PluginInfo) DeepCopy(full bool) *PluginInfo {
 	c := &PluginInfo{
 		Name:    p.Name,
@@ -48,6 +50,7 @@ func (p *PluginInfo) DeepCopy(full bool) *PluginInfo {
 	return c
 }
 
+// Function describes a single method exposed by a plugin.
 type Function struct {
 	Name   string  `json:"name,omitempty"`
 	Input  *Entity `json:"input,omitempty"`
@@ -62,13 +65,16 @@ func (f *Function) DeepCopy() Function {
 	}
 }
 
+// Entity describes a Go type used as a method input or output.
+// Nested composite types are represented via the Fields slice.
 type Entity struct {
 	Name      string   `json:"name,omitempty"`
-	Type      string   `json:"type,omitempty"`
+	Type      string   `json:"type,omitempty"` // Go kind string, e.g. "struct", "int", "[]struct"
 	Mandatory bool     `json:"mandatory,omitempty"`
 	Fields    []Entity `json:"fields,omitempty"`
 }
 
+// DeepCopy returns an independent copy of e, or nil when e is nil.
 func (e *Entity) DeepCopy() *Entity {
 	if e == nil {
 		return nil
@@ -87,6 +93,8 @@ func (e *Entity) DeepCopy() *Entity {
 	}
 }
 
+// merge overlays user-supplied descriptions from src onto e.
+// Fields present in e but absent in src are dropped from the result.
 func (e *Entity) merge(src *Entity) *Entity {
 	if e == nil {
 		return nil
@@ -120,8 +128,6 @@ func (e *Entity) merge(src *Entity) *Entity {
 	}
 
 	var fields []Entity
-
-	// Build final fields slice
 	for _, field := range origFieldMap {
 		fields = append(fields, field)
 	}
@@ -134,23 +140,20 @@ func (e *Entity) merge(src *Entity) *Entity {
 	}
 }
 
-// AsyncData represents data received asynchronously from a plugin.
+// AsyncData carries a notification delivered asynchronously from a plugin.
 type AsyncData struct {
 	Name    string `json:"name,omitempty"`
 	Payload any    `json:"payload,omitempty"`
 }
 
-// Envelope represents a message structure used as an RPC call/return.
-// It is used internally.
 type Envelope struct {
-	Seq     uint64
-	Trace   string
-	Method  string
-	Error   string
-	Payload []byte
+	Seq     uint64 // monotonically increasing ID matching a request to its response
+	Trace   string // optional trace ID propagated from the caller
+	Method  string // method name, or a control constant (MethodAsync, MethodShutdown)
+	Error   string // non-empty when the plugin returned an error
+	Payload []byte // JSON-encoded method argument or return value
 }
 
-// encode serializes the provided value into the Envelope's Payload using JSON encoding.
 func (e *Envelope) encode(v any) (err error) {
 	if v != nil {
 		e.Payload, err = json.Marshal(v)
@@ -158,7 +161,6 @@ func (e *Envelope) encode(v any) (err error) {
 	return
 }
 
-// decode deserializes the Envelope's Payload into the provided value using JSON decoding.
 func (e *Envelope) decode(v any) (err error) {
 	if e.Payload != nil {
 		err = json.Unmarshal(e.Payload, v)

@@ -1,25 +1,31 @@
 package brpc
 
-type Options interface {
-	apply(*Socket)
+// SocketOption configures a Socket at construction time.
+type SocketOption func(*socket)
+
+// WithKeySequencer sets a function to generate a unique plugin name on conflict,
+// applied up to attempts times before rejecting the connection.
+func WithKeySequencer(fn func(name string) string, attempts uint) SocketOption {
+	return func(s *socket) {
+		s.keySequencer = fn
+		s.attempts = attempts
+	}
 }
 
-type keySequencer struct {
-	fn       func(name string) string
-	attempts uint
+// WithCallback sets fn as the handler called whenever a plugin disconnects.
+// graceful is true when the disconnection was requested explicitly via Unplug or Shutdown.
+func WithCallback(fn func(info *PluginInfo, graceful bool)) SocketOption {
+	return func(s *socket) {
+		s.callback = fn
+	}
 }
 
-func (f keySequencer) apply(socket *Socket) {
-	socket.keySequencer = f.fn
-	socket.attempts = f.attempts
-}
+// LocalOption configures a Local at construction time.
+type LocalOption func(*local)
 
-// WithKeySequencer returns an option that applies a function to modify repeated plugin names,
-// enabling multiple connections with the same base name by generating unique variations.
-//
-// The `fn` parameter is used to transform the name when a conflict is detected,
-// and `attempts` defines the maximum number of times the function will be applied
-// before failing to register the plugin.
-func WithKeySequencer(fn func(name string) string, attempts uint) Options {
-	return keySequencer{fn: fn, attempts: attempts}
+// WithCtxKey sets the context key used to store the trace ID in each method's context.
+func WithCtxKey(key any) LocalOption {
+	return func(l *local) {
+		l.ctxKey = key
+	}
 }
